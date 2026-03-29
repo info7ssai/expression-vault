@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Trash2, Plus, Search, BookOpen, LogIn, LogOut } from 'lucide-react';
 import { auth, googleProvider, db } from './firebase';
-import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged } from 'firebase/auth';
 import {
   collection,
   addDoc,
@@ -62,7 +62,15 @@ const ExpressionVault = () => {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
-      console.error('ログインエラー:', error);
+      // アプリ内ブラウザなどでポップアップが使えない場合はリダイレクトにフォールバック
+      if (error.code === 'auth/unauthorized-domain' ||
+          error.code === 'auth/popup-blocked' ||
+          error.code === 'auth/popup-closed-by-user' ||
+          error.message?.includes('disallowed_useragent')) {
+        await signInWithRedirect(auth, googleProvider);
+      } else {
+        console.error('ログインエラー:', error);
+      }
     }
   };
 
@@ -141,6 +149,19 @@ const ExpressionVault = () => {
           <p style={{ color: 'var(--color-text-secondary)', fontSize: '16px', marginBottom: '40px' }}>
             SNSや記事で見つけた英語表現をさっと保存。あなただけの表現辞書。
           </p>
+          {/FBAN|FBAV|Instagram|Line|Twitter|Snapchat/.test(navigator.userAgent) && (
+            <p style={{
+              color: '#b45309',
+              backgroundColor: '#fef3c7',
+              padding: '12px 16px',
+              borderRadius: 'var(--border-radius-md)',
+              fontSize: '14px',
+              marginBottom: '20px',
+              lineHeight: '1.6'
+            }}>
+              アプリ内ブラウザではGoogleログインが使えません。右上の「...」メニューから「Safariで開く」または「ブラウザで開く」を選んでください。
+            </p>
+          )}
           <button
             onClick={handleLogin}
             style={{
