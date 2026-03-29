@@ -1,7 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Trash2, Plus, Search, BookOpen } from 'lucide-react';
+import { Trash2, Plus, Search, BookOpen, LogIn, LogOut } from 'lucide-react';
+import { auth, googleProvider, db } from './firebase';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import {
+  collection,
+  addDoc,
+  deleteDoc,
+  doc,
+  query,
+  orderBy,
+  onSnapshot
+} from 'firebase/firestore';
 
 const ExpressionVault = () => {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [expressions, setExpressions] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState({
@@ -13,45 +26,86 @@ const ExpressionVault = () => {
   });
   const [showForm, setShowForm] = useState(false);
 
-  // ローカルストレージから読み込み
+  // 認証状態の監視
   useEffect(() => {
-    const saved = localStorage.getItem('expressionVault');
-    if (saved) {
-      setExpressions(JSON.parse(saved));
-    }
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
-  // ローカルストレージに保存
+  // Firestoreからリアルタイムでデータ取得
   useEffect(() => {
-    localStorage.setItem('expressionVault', JSON.stringify(expressions));
-  }, [expressions]);
+    if (!user) {
+      setExpressions([]);
+      return;
+    }
 
-  const handleAddExpression = (e) => {
+    const q = query(
+      collection(db, 'users', user.uid, 'expressions'),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setExpressions(data);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error('ログインエラー:', error);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('ログアウトエラー:', error);
+    }
+  };
+
+  const handleAddExpression = async (e) => {
     e.preventDefault();
     if (!formData.expression.trim() || !formData.meaning.trim()) {
       alert('表現と意味は必須です');
       return;
     }
 
-    const newExpression = {
-      id: Date.now(),
-      ...formData,
-      createdAt: new Date().toLocaleString('ja-JP')
-    };
-
-    setExpressions([newExpression, ...expressions]);
-    setFormData({
-      expression: '',
-      meaning: '',
-      example: '',
-      sourceUrl: '',
-      sourceTimestamp: ''
-    });
-    setShowForm(false);
+    try {
+      await addDoc(collection(db, 'users', user.uid, 'expressions'), {
+        ...formData,
+        createdAt: new Date().toISOString()
+      });
+      setFormData({
+        expression: '',
+        meaning: '',
+        example: '',
+        sourceUrl: '',
+        sourceTimestamp: ''
+      });
+      setShowForm(false);
+    } catch (error) {
+      console.error('保存エラー:', error);
+      alert('保存に失敗しました');
+    }
   };
 
-  const handleDelete = (id) => {
-    setExpressions(expressions.filter(expr => expr.id !== id));
+  const handleDelete = async (id) => {
+    try {
+      await deleteDoc(doc(db, 'users', user.uid, 'expressions', id));
+    } catch (error) {
+      console.error('削除エラー:', error);
+    }
   };
 
   const filteredExpressions = expressions.filter(expr =>
@@ -59,6 +113,64 @@ const ExpressionVault = () => {
     expr.meaning.toLowerCase().includes(searchTerm.toLowerCase()) ||
     expr.example.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const formatDate = (isoString) => {
+    return new Date(isoString).toLocaleString('ja-JP');
+  };
+
+  if (authLoading) {
+    return (
+      <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '20px', textAlign: 'center', paddingTop: '100px' }}>
+        <p style={{ color: 'var(--color-text-secondary)' }}>読み込み中...</p>
+      </div>
+    );
+  }
+
+  // 未ログイン画面
+  if (!user) {
+    return (
+      <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '20px' }}>
+        <div style={{
+          textAlign: 'center',
+          paddingTop: '80px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '16px' }}>
+            <BookOpen size={40} style={{ color: 'var(--color-text-primary)' }} />
+            <h1 style={{ fontSize: '32px', fontWeight: '500', margin: '0' }}>Expression Vault</h1>
+          </div>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: '16px', marginBottom: '40px' }}>
+            SNSや記事で見つけた英語表現をさっと保存。あなただけの表現辞書。
+          </p>
+          <button
+            onClick={handleLogin}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '14px 28px',
+              backgroundColor: 'var(--color-background-secondary)',
+              border: '1px solid var(--color-border-secondary)',
+              borderRadius: 'var(--border-radius-lg)',
+              cursor: 'pointer',
+              fontSize: '16px',
+              fontWeight: '500',
+              color: 'var(--color-text-primary)',
+              transition: 'all 0.2s'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-background-tertiary)';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-background-secondary)';
+            }}
+          >
+            <LogIn size={20} />
+            Googleでログイン
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '20px' }}>
@@ -68,11 +180,50 @@ const ExpressionVault = () => {
         paddingBottom: '20px',
         borderBottom: '2px solid var(--color-border-tertiary)'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-          <BookOpen size={32} style={{ color: 'var(--color-text-primary)' }} />
-          <h1 style={{ fontSize: '28px', fontWeight: '500', margin: '0' }}>Expression Vault</h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <BookOpen size={32} style={{ color: 'var(--color-text-primary)' }} />
+            <h1 style={{ fontSize: '28px', fontWeight: '500', margin: '0' }}>Expression Vault</h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+              {user.displayName}
+            </span>
+            {user.photoURL && (
+              <img
+                src={user.photoURL}
+                alt=""
+                style={{ width: '32px', height: '32px', borderRadius: '50%' }}
+              />
+            )}
+            <button
+              onClick={handleLogout}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 12px',
+                backgroundColor: 'transparent',
+                border: '1px solid var(--color-border-tertiary)',
+                borderRadius: 'var(--border-radius-md)',
+                cursor: 'pointer',
+                fontSize: '13px',
+                color: 'var(--color-text-secondary)',
+                transition: 'all 0.2s'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--color-background-secondary)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+            >
+              <LogOut size={14} />
+              ログアウト
+            </button>
+          </div>
         </div>
-        <p style={{ color: 'var(--color-text-secondary)', margin: '0', fontSize: '14px' }}>
+        <p style={{ color: 'var(--color-text-secondary)', margin: '8px 0 0', fontSize: '14px' }}>
           SNSや記事で見つけた英語表現をさっと保存。あなただけの表現辞書。
         </p>
       </div>
@@ -308,7 +459,6 @@ const ExpressionVault = () => {
                   e.currentTarget.style.borderColor = 'var(--color-border-tertiary)';
                 }}
               >
-                {/* 表現 */}
                 <div style={{ marginBottom: '12px' }}>
                   <h3 style={{
                     fontSize: '18px',
@@ -321,7 +471,6 @@ const ExpressionVault = () => {
                   </h3>
                 </div>
 
-                {/* 意味 */}
                 <div style={{ marginBottom: '12px' }}>
                   <p style={{
                     fontSize: '14px',
@@ -341,7 +490,6 @@ const ExpressionVault = () => {
                   </p>
                 </div>
 
-                {/* 使用例 */}
                 {expr.example && (
                   <div style={{ marginBottom: '12px' }}>
                     <p style={{
@@ -367,7 +515,6 @@ const ExpressionVault = () => {
                   </div>
                 )}
 
-                {/* 出典 */}
                 {(expr.sourceUrl || expr.sourceTimestamp) && (
                   <div style={{ marginBottom: '12px' }}>
                     <p style={{
@@ -391,7 +538,6 @@ const ExpressionVault = () => {
                   </div>
                 )}
 
-                {/* メタ情報 */}
                 <div style={{
                   fontSize: '12px',
                   color: 'var(--color-text-tertiary)',
@@ -399,10 +545,9 @@ const ExpressionVault = () => {
                   paddingTop: '8px',
                   borderTop: '1px solid var(--color-border-tertiary)'
                 }}>
-                  保存: {expr.createdAt}
+                  保存: {formatDate(expr.createdAt)}
                 </div>
 
-                {/* 削除ボタン */}
                 <button
                   onClick={() => handleDelete(expr.id)}
                   style={{
@@ -446,7 +591,7 @@ const ExpressionVault = () => {
         textAlign: 'center'
       }}>
         <p style={{ margin: '0' }}>
-          {expressions.length} 個の表現を保存中 • データはブラウザに保存されます
+          {expressions.length} 個の表現を保存中
         </p>
       </div>
     </div>
